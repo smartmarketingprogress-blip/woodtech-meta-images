@@ -71,6 +71,7 @@ def parse_feed(xml):
             "id": pid,
             "name": tag(block, "name"),
             "price": tag(block, "price_with_vat"),
+            "category": tag(block, "category"),
             "images": [u for u in [tag(block, "image")] + adds if u][:6],
         })
     return out
@@ -246,10 +247,13 @@ def main():
                 w.writerow([p["id"], f"{BASE_URL}/img/{p['id']}.jpg?v={state[p['id']]}"])
                 rows += 1
     total = sum(os.path.getsize(os.path.join(IMG_DIR, f)) for f in os.listdir(IMG_DIR))
-    with open(os.path.join(OUT, "index.html"), "w") as fh:
-        fh.write(f"<!doctype html><meta charset=utf-8><title>Woodtech Meta images</title>"
-                 f"<p>{rows} images · updated {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}</p>"
-                 f"<p><a href=feed.csv>feed.csv</a></p>")
+    catalog = [{"id": p["id"], "n": clean_name(p["name"]), "c": p["category"], "p": fmt_price(p["price"]),
+                "v": state[p["id"]]} for p in products
+               if p["id"] in state and os.path.exists(os.path.join(IMG_DIR, p["id"] + ".jpg"))]
+    with open(os.path.join(OUT, "products.json"), "w", encoding="utf-8") as fh:
+        json.dump({"updated": time.strftime("%d/%m/%Y"), "items": catalog}, fh, ensure_ascii=False, separators=(",", ":"))
+    with open("gallery.html", encoding="utf-8") as src, open(os.path.join(OUT, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write(src.read())
     print(f"feed rows: {rows}, images size: {total/1e6:.0f} MB")
     if total > 950e6:
         print("::warning::site is close to the 1 GB GitHub Pages limit; lower JPEG_QUALITY")
