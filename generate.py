@@ -18,7 +18,18 @@ BASE_URL = os.environ.get("BASE_URL", "https://smartmarketingprogress-blip.githu
 OUT = "site"
 IMG_DIR = os.path.join(OUT, "img")
 STATE = os.path.join(OUT, "state.json")
-TEMPLATE_VERSION = "v3"  # bump to force a full re-render after design changes
+TEMPLATE_VERSION = "v4"  # bump to force a full re-render after design changes
+
+# Promotion: products listed in this site category get a sale price and a badge.
+# The promo switches itself off after PROMO_UNTIL (Athens time) or when the category is empty.
+PROMO = {
+    "url": "https://www.wood-tech.gr/proionta/black-friday",
+    "discount": 0.15,
+    "badge": "BLACK FRIDAY -15%",
+    "label": "black_friday",
+    "from": "2026-11-27T00:00+02:00",
+    "until": "2026-12-01T00:00+02:00",
+}
 
 S = 1080
 BG = (188, 149, 101)       # wood tan from wood-tech.gr
@@ -40,6 +51,9 @@ F_PRICE = font(True, 92)
 F_NAME = font(True, 28)
 F_SMALL = font(False, 22)
 F_BIG = font(True, 29)
+F_OLD = font(True, 36)
+F_SALE = font(True, 76)
+F_BADGE = font(True, 34)
 
 session = requests.Session()
 session.headers["User-Agent"] = "Mozilla/5.0 (WoodtechMetaImages)"
@@ -72,9 +86,30 @@ def parse_feed(xml):
             "name": tag(block, "name"),
             "price": tag(block, "price_with_vat"),
             "category": tag(block, "category"),
+            "link": tag(block, "link"),
             "images": [u for u in [tag(block, "image")] + adds if u][:6],
         })
     return out
+
+def promo_active():
+    from datetime import datetime
+    now = datetime.now().astimezone()
+    return datetime.fromisoformat(PROMO["from"]) <= now < datetime.fromisoformat(PROMO["until"])
+
+def promo_slugs():
+    """Product URL slugs listed in the promo category (VirtueMart pages of 150)."""
+    slugs, start = set(), 1
+    while start < 20000:
+        data = get(f"{PROMO['url']}/results,{start}-{start + 149}")
+        if not data:
+            break
+        found = {m for m in re.findall(r'href="/proionta/black-friday/([^"/?#]+)"', data.decode("utf-8", "replace"))
+                 if not m.startswith(("results,", "by,"))}
+        if not found - slugs:
+            break
+        slugs |= found
+        start += 150
+    return slugs
 
 def load(url):
     url = url.replace("https://wood-tech.gr", "https://www.wood-tech.gr")
@@ -164,7 +199,20 @@ def render(p):
         fit(card, cut, (60, 150, 880, 500), False)
 
     d.text((50, 685), ellipsize(d, clean_name(p["name"]), F_NAME, 900), font=F_NAME, fill=GREY)
-    d.text((48, 725), fmt_price(p["price"]), font=F_PRICE, fill=INK)
+    if p.get("sale"):
+        sale_txt = fmt_price(p["sale"])
+        d.text((48, 725), sale_txt, font=F_PRICE, fill=(200, 40, 40))
+        sx = 48 + d.textlength(sale_txt, font=F_PRICE) + 28
+        old = fmt_price(p["price"])
+        d.text((sx, 772), old, font=F_OLD, fill=GREY)
+        l, t, r, b = d.textbbox((sx, 772), old, font=F_OLD)
+        d.line((l - 2, (t + b) // 2, r + 2, (t + b) // 2), fill=GREY, width=4)
+        # badge, top-left
+        bw = d.textlength(PROMO["badge"], font=F_BADGE) + 44
+        d.rounded_rectangle((30, 40, 30 + bw, 110), 14, fill=INK)
+        d.text((52, 56), PROMO["badge"], font=F_BADGE, fill=BG)
+    else:
+        d.text((48, 725), fmt_price(p["price"]), font=F_PRICE, fill=INK)
 
     fy = 850
     d.rectangle((0, fy, 1000, 1000), fill=DARK)
@@ -187,7 +235,7 @@ def render(p):
     return c
 
 def key_of(p):
-    raw = "|".join([TEMPLATE_VERSION, p["name"], p["price"]] + p["images"])
+    raw = "|".join([TEMPLATE_VERSION, p["name"], p["price"], p.get("sale") or ""] + p["images"])
     return hashlib.sha1(raw.encode()).hexdigest()[:10]
 
 def main():
@@ -198,6 +246,14 @@ def main():
         sys.exit("Could not download feed")
     products = parse_feed(xml.decode("utf-8", "replace"))
     print(f"products in feed: {len(products)}")
+    if promo_active():
+        slugs = promo_slugs()
+        n = 0
+        for p in products:
+            if p["link"].rstrip("/").rsplit("/", 1)[-1] in slugs:
+                p["sale"] = f"{float(p['price']) * (1 - PROMO['discount']):.2f}"
+                n += 1
+        print(f"promo: {len(slugs)} listed on site, {n} matched in feed")
     logo = get(LOGO_URL)
     if logo:
         LOGO = Image.open(io.BytesIO(logo)).convert("RGBA")
@@ -241,14 +297,18 @@ def main():
     rows = 0
     with open(os.path.join(OUT, "feed.csv"), "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["id", "image_link"])
+        w.writerow(["id", "image_link", "sale_price", "sale_price_effective_date", "custom_label_4"])
         for p in products:
             if p["id"] in state and os.path.exists(os.path.join(IMG_DIR, p["id"] + ".jpg")):
-                w.writerow([p["id"], f"{BASE_URL}/img/{p['id']}.jpg?v={state[p['id']]}"])
+                sale = p.get("sale")
+                w.writerow([p["id"], f"{BASE_URL}/img/{p['id']}.jpg?v={state[p['id']]}",
+                            f"{sale} EUR" if sale else "",
+                            f"{PROMO['from']}/{PROMO['until']}" if sale else "",
+                            PROMO["label"] if sale else ""])
                 rows += 1
     total = sum(os.path.getsize(os.path.join(IMG_DIR, f)) for f in os.listdir(IMG_DIR))
-    catalog = [{"id": p["id"], "n": clean_name(p["name"]), "c": p["category"], "p": fmt_price(p["price"]),
-                "v": state[p["id"]]} for p in products
+    catalog = [{"id": p["id"], "n": clean_name(p["name"]), "c": p["category"], "p": fmt_price(p["sale"] or p["price"]) if p.get("sale") else fmt_price(p["price"]),
+                "v": state[p["id"]], **({"bf": 1} if p.get("sale") else {})} for p in products
                if p["id"] in state and os.path.exists(os.path.join(IMG_DIR, p["id"] + ".jpg"))]
     with open(os.path.join(OUT, "products.json"), "w", encoding="utf-8") as fh:
         json.dump({"updated": time.strftime("%d/%m/%Y"), "items": catalog}, fh, ensure_ascii=False, separators=(",", ":"))

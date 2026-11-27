@@ -68,6 +68,7 @@
 <script>
 const PAGE = 60;
 const QUICK = [
+  ["Black Friday -15%", "__bf", ""],
   ["Καναπέδες", "Σαλόνια - γωνίες", ""],
   ["Κρεβάτια με αποθηκευτικό", "Κρεβάτια", "αποθ"],
   ["Τραπεζαρίες", "Τραπεζαρίες", ""],
@@ -83,7 +84,7 @@ function leaf(c) { return c.split(">").map(x => x.trim()).filter(Boolean).slice(
 
 function apply(push) {
   const cat = $("cat").value, q = norm($("q").value).split(/\s+/).filter(Boolean);
-  list = items.filter(it => (!cat || it.c === cat || it.c.startsWith(cat + " >")) &&
+  list = items.filter(it => (cat === "__bf" ? it.bf : (!cat || it.c === cat || it.c.startsWith(cat + " >"))) &&
                             q.every(w => it._s.includes(w)));
   shown = 0; $("grid").innerHTML = "";
   $("count").textContent = list.length.toLocaleString("el-GR") + " προϊόντα";
@@ -123,6 +124,11 @@ fetch("products.json").then(r => r.json()).then(data => {
     const parts = it.c.split(">").map(x => x.trim());
     return parts.map((_, i) => parts.slice(0, i + 1).join(" > "));
   }))].sort((a, b) => a.localeCompare(b, "el"));
+  if (items.some(it => it.bf)) {
+    const o = document.createElement("option");
+    o.value = "__bf"; o.textContent = "Black Friday -15%";
+    $("cat").appendChild(o);
+  }
   for (const c of cats) {
     const o = document.createElement("option");
     const depth = c.split(" > ").length - 1;
@@ -130,7 +136,7 @@ fetch("products.json").then(r => r.json()).then(data => {
     $("cat").appendChild(o);
   }
   for (const [label, key, q] of QUICK) {
-    const full = cats.find(c => leaf(c) === key || c === key);
+    const full = key === "__bf" ? (items.some(it => it.bf) ? "__bf" : null) : cats.find(c => leaf(c) === key || c === key);
     if (!full) continue;
     const b = document.createElement("button");
     b.className = "chip"; b.textContent = label; b.dataset.cat = full; b.dataset.q = q;
