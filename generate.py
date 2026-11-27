@@ -18,7 +18,7 @@ BASE_URL = os.environ.get("BASE_URL", "https://smartmarketingprogress-blip.githu
 OUT = "site"
 IMG_DIR = os.path.join(OUT, "img")
 STATE = os.path.join(OUT, "state.json")
-TEMPLATE_VERSION = "v2"  # bump to force a full re-render after design changes
+TEMPLATE_VERSION = "v3"  # bump to force a full re-render after design changes
 
 S = 1080
 BG = (188, 149, 101)       # wood tan from wood-tech.gr
@@ -130,13 +130,21 @@ def ellipsize(draw, text, fnt, maxw):
 
 LOGO = None
 
+# Colour charts, spec sheets and dimension drawings must never be the main or lifestyle photo
+SKIP_NAME = re.compile(r"chrom|color|colour|chart|xrom|diastas|dimens|spec|sxedio|schedio|odigies", re.I)
+
 def render(p):
-    imgs = [i for i in (load(u) for u in p["images"]) if i is not None]
+    loaded = [(u, load(u)) for u in p["images"]]
+    imgs = [i for u, i in loaded if i is not None and not SKIP_NAME.search(u.rsplit("/", 1)[-1])]
+    if not imgs:
+        imgs = [i for u, i in loaded if i is not None][:1]
     if not imgs:
         return None
-    scored = sorted(((white_ratio(i), i) for i in imgs), key=lambda t: -t[0])
-    cut = scored[0][1]
-    life = scored[-1][1] if len(scored) > 1 and scored[-1][0] < 0.5 else None
+    scored = [(white_ratio(i), i) for i in imgs]
+    cut = max(scored, key=lambda t: t[0])[1]
+    # lifestyle: not the cut-out, not portrait (charts/infographics), clearly not a white-background shot
+    life_c = [(w, i) for w, i in scored if i is not cut and i.width >= i.height * 0.95 and w < 0.5]
+    life = min(life_c, key=lambda t: t[0])[1] if life_c else None
 
     c = Image.new("RGB", (S, S), BG)
     card = Image.new("RGB", (1000, 1000), (255, 255, 255))
