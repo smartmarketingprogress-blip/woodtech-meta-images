@@ -1,0 +1,57 @@
+name: Build Meta images
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 03:00 Athens (winter), nightly
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Render only N products (0 = all)"
+        default: "0"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-dejavu-core
+          pip install -q pillow requests
+      - name: Restore previous images
+        uses: actions/cache/restore@v4
+        with:
+          path: site
+          key: site-${{ github.run_id }}
+          restore-keys: site-
+      - name: Render
+        env:
+          LIMIT: ${{ github.event.inputs.limit || '0' }}
+        run: python generate.py
+      - name: Save images for next run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: site
+          key: site-${{ github.run_id }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
